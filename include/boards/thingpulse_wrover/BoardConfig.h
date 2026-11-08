@@ -1,9 +1,7 @@
 
 #pragma once
 
-namespace wirelessrecon::hardware {
-
-    static constexpr char kBoardName[] =
+static constexpr char kBoardName[] =
         "ThingPulse Color Kit Grande / ESP32-WROVER";
 
     // Wireless capabilities
@@ -38,4 +36,3 @@ namespace wirelessrecon::hardware {
         "ILI9488 display; FT6236 capacitive touch; "
         "existing Phase 7.1 baseline wiring";
 
-} // namespace wirelessrecon::hardware

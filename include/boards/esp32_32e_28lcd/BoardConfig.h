@@ -1,10 +1,8 @@
 
 #pragma once
 
-namespace wirelessrecon::hardware {
-
-    static constexpr char kBoardName[] =
-        "ELEGOO ESP32-32E N4 / 2.8-inch display";
+static constexpr char kBoardName[] =
+    "ELEGOO ESP32-32E N4 / 2.8-inch display";
 
     // Wireless capabilities
     static constexpr bool kHasWifi = true;
@@ -38,4 +36,3 @@ namespace wirelessrecon::hardware {
         "ILI9341 reported by product description; "
         "resistive touch; controller and GPIO mapping require verification";
 
-} // namespace wirelessrecon::hardware

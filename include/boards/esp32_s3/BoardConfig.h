@@ -1,9 +1,7 @@
 
 #pragma once
 
-namespace wirelessrecon::hardware {
-
-    static constexpr char kBoardName[] = "ESP32-S3";
+static constexpr char kBoardName[] = "ESP32-S3";
 
     // Wireless capabilities
     static constexpr bool kHasWifi = true;
@@ -34,4 +32,3 @@ namespace wirelessrecon::hardware {
     static constexpr char kDisplayNotes[] =
         "No display profile configured";
 
-} // namespace wirelessrecon::hardware
