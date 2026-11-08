@@ -10,6 +10,24 @@
 
 namespace wirelessrecon::hardware::display {
 
+    uint8_t spiMode = 0;
+
+    uint16_t memoryWidth = 0;
+    uint16_t memoryHeight = 0;
+
+    uint16_t panelWidth = 0;
+    uint16_t panelHeight = 0;
+
+    int16_t offsetX = 0;
+    int16_t offsetY = 0;
+
+    uint8_t dummyReadPixel = 8;
+    uint8_t dummyReadBits = 1;
+
+    bool readable = false;
+    bool rgbOrder = false;
+    bool busShared = false;
+
     enum class DisplayController : uint8_t {
         Unknown,
         ILI9341,

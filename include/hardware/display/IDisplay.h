@@ -77,7 +77,7 @@ namespace wirelessrecon::hardware::display {
         ) = 0;
 
         // Backlight control.
-        virtual void setBacklight(uint8_t brightness) = 0;
+        virtual void setBacklight(bool enabled) = 0;
     };
 
 } // namespace wirelessrecon::hardware::display
