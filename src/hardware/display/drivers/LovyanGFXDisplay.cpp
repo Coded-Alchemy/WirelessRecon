@@ -23,22 +23,86 @@ LovyanGFXDisplay::LovyanGFXDisplay(const DisplayConfig& config)
 
 bool LovyanGFXDisplay::begin() {
 
-    // Validate required hardware configuration.
-    if (config_.bus != DisplayBus::SPI ||
-        config_.controller != DisplayController::ILI9488 ||
-        config_.pinSclk < 0 ||
+    Serial.println();
+    Serial.println("[LGFX] Validating display configuration...");
+
+    Serial.printf(
+        "[LGFX] Controller: %d\n",
+        static_cast<int>(config_.controller)
+    );
+
+    Serial.printf(
+        "[LGFX] Bus: %d\n",
+        static_cast<int>(config_.bus)
+    );
+
+    Serial.printf(
+        "[LGFX] SCLK: %d\n",
+        config_.pinSclk
+    );
+
+    Serial.printf(
+        "[LGFX] MOSI: %d\n",
+        config_.pinMosi
+    );
+
+    Serial.printf(
+        "[LGFX] MISO: %d\n",
+        config_.pinMiso
+    );
+
+    Serial.printf(
+        "[LGFX] CS: %d\n",
+        config_.pinCs
+    );
+
+    Serial.printf(
+        "[LGFX] DC: %d\n",
+        config_.pinDc
+    );
+
+    Serial.printf(
+        "[LGFX] RESET: %d\n",
+        config_.pinReset
+    );
+
+    Serial.printf(
+        "[LGFX] Backlight: %d\n",
+        config_.pinBacklight
+    );
+
+    Serial.printf(
+        "[LGFX] Panel: %u x %u\n",
+        config_.panelWidth,
+        config_.panelHeight
+    );
+
+    if (config_.bus != wirelessrecon::hardware::DisplayBus::SPI) {
+        Serial.println("[LGFX] ERROR: Display bus is not SPI.");
+        return false;
+    }
+
+    if (config_.controller != wirelessrecon::hardware::DisplayController::ILI9488) {
+        Serial.println("[LGFX] ERROR: Unsupported display controller.");
+        return false;
+    }
+
+    if (config_.pinSclk < 0 ||
         config_.pinMosi < 0 ||
         config_.pinCs < 0 ||
         config_.pinDc < 0 ||
         config_.pinReset < 0) {
 
-        initialized_ = false;
+        Serial.println("[LGFX] ERROR: Invalid required GPIO configuration.");
         return false;
     }
 
+    Serial.println("[LGFX] Configuration validation passed.");
+
     configureBus();
 
-    // Configure the ILI9488 panel.
+    Serial.println("[LGFX] SPI bus configured.");
+
     panel9488_.setBus(&bus_);
 
     lgfx::Panel_ILI9488::config_t panelConfig =
@@ -70,19 +134,23 @@ bool LovyanGFXDisplay::begin() {
 
     panel9488_.config(panelConfig);
 
-    // Attach the configured panel to the LovyanGFX device.
+    Serial.println("[LGFX] Panel configured.");
+
     device_.setPanel(&panel9488_);
 
-    // Initialize the display.
+    Serial.println("[LGFX] Initializing LovyanGFX...");
+
     device_.init();
 
-    // Configure rotation.
+    Serial.println("[LGFX] LovyanGFX initialization returned.");
+
     device_.setRotation(config_.rotation);
 
-    // Enable backlight.
     setBacklight(true);
 
     initialized_ = true;
+
+    Serial.println("[LGFX] Display initialization complete.");
 
     return true;
 }

@@ -55,7 +55,7 @@ namespace wirelessrecon::hardware::display {
         void setBacklight(bool enabled) override;
 
     private:
-        DisplayConfig config_;
+        const DisplayConfig& config_;
 
         lgfx::LGFX_Device device_;
         lgfx::Panel_ILI9488 panel9488_;
@@ -65,7 +65,6 @@ namespace wirelessrecon::hardware::display {
         bool initialized_ = false;
 
         void configureBus();
-        void configurePanel(lgfx::Panel_Device& panel);
     };
 
 } // namespace wirelessrecon::hardware::display
