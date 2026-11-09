@@ -105,7 +105,7 @@ void LovyanGFXDisplay::configureBus() {
     busConfig.spi_3wire = false;
     busConfig.use_lock = true;
 
-    busConfig.dma_channel = SPI_DMA_CH_AUTO;
+    busConfig.dma_channel = LGFX_ESP32_SPI_DMA_CH;
 
     busConfig.pin_sclk = config_.pinSclk;
     busConfig.pin_mosi = config_.pinMosi;
