@@ -3,24 +3,12 @@
 // Created by Taji Abdullah on 11/8/26.
 //
 
-
 #pragma once
 
 #include <cstdint>
+#include "hardware/HardwareTypes.h"
 
 namespace wirelessrecon::hardware::display {
-
-    enum class DisplayController : uint8_t {
-        Unknown,
-        ILI9341,
-        ILI9488
-    };
-
-    enum class DisplayBus : uint8_t {
-        Unknown,
-        SPI,
-        Parallel
-    };
 
     struct DisplayConfig {
 
@@ -28,8 +16,11 @@ namespace wirelessrecon::hardware::display {
         // Controller and bus
         // ========================================================
 
-        DisplayController controller = DisplayController::Unknown;
-        DisplayBus bus = DisplayBus::Unknown;
+        wirelessrecon::hardware::DisplayController controller =
+            wirelessrecon::hardware::DisplayController::Unknown;
+
+        wirelessrecon::hardware::DisplayBus bus =
+            wirelessrecon::hardware::DisplayBus::Unknown;
 
         // ========================================================
         // Display dimensions
@@ -48,7 +39,7 @@ namespace wirelessrecon::hardware::display {
         int16_t offsetY = 0;
 
         // ========================================================
-        // SPI GPIO configuration
+        // SPI GPIO
         // ========================================================
 
         int16_t pinSclk = -1;
@@ -60,7 +51,7 @@ namespace wirelessrecon::hardware::display {
         int16_t pinBacklight = -1;
 
         // ========================================================
-        // SPI configuration
+        // SPI settings
         // ========================================================
 
         uint8_t spiMode = 0;
@@ -69,12 +60,11 @@ namespace wirelessrecon::hardware::display {
         uint32_t readFrequency = 16000000;
 
         // ========================================================
-        // Panel configuration
+        // Panel settings
         // ========================================================
 
         uint8_t dummyReadPixel = 8;
         uint8_t dummyReadBits = 1;
-
         uint8_t rotation = 0;
 
         bool readable = false;
@@ -84,4 +74,4 @@ namespace wirelessrecon::hardware::display {
         bool useDma = true;
     };
 
-}
+} // namespace wirelessrecon::hardware::display
