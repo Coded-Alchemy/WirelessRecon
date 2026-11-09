@@ -2,7 +2,7 @@
 // Created by dedlee on 11/8/26.
 //
 
-#include "hardware/display/LovyanGFXDisplay.h"
+#include "hardware/display/drivers/LovyanGFXDisplay.h"
 
 #include <Arduino.h>
 #include <LovyanGFX.hpp>
