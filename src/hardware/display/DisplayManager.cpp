@@ -1,7 +1,3 @@
-//
-// Created by dedlee on 11/8/26.
-//
-
 #include "hardware/display/DisplayManager.h"
 
 namespace wirelessrecon::hardware::display {
@@ -11,7 +7,13 @@ namespace wirelessrecon::hardware::display {
     }
 
     bool DisplayManager::begin() {
+
+        if (initialized_) {
+            return true;
+        }
+
         initialized_ = display_.begin();
+
         return initialized_;
     }
 
