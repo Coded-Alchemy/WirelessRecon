@@ -71,3 +71,18 @@ static constexpr bool kTftReadable = false;
 static constexpr bool kTftInvertColors = false;
 static constexpr bool kTftRgbOrder = false;
 static constexpr bool kTftBusShared = false;
+
+// ============================================================
+// FT6236 capacitive touch configuration
+// ============================================================
+
+// Confirmed from the working Phase 7.1 implementation.
+static constexpr int16_t kTouchSda = 23;
+static constexpr int16_t kTouchScl = 22;
+
+static constexpr uint8_t kTouchI2cAddress = 0x38;
+static constexpr uint32_t kTouchI2cFrequency = 400000;
+
+// Native touch coordinate resolution.
+static constexpr uint16_t kTouchWidth = 320;
+static constexpr uint16_t kTouchHeight = 480;
