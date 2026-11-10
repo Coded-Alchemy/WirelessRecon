@@ -410,8 +410,8 @@ This project is currently developed and verified using Fedora Linux and Platform
 ### Clone the repository
 
 ```bash
-git clone <YOUR_REPOSITORY_URL>
-cd WirelessRecon_Modular
+git clone https://github.com/Coded-Alchemy/WirelessRecon.git
+cd WirelessRecon
 ```
 
 Replace the repository URL with the actual GitHub repository address.
