@@ -67,6 +67,16 @@ namespace wirelessrecon::hardware::display {
             Color color
         ) = 0;
 
+        // Transfer an RGB565 pixel rectangle to the display.
+        // Pixels are supplied row-major, with width * height entries.
+        virtual void pushPixels(
+            int16_t x,
+            int16_t y,
+            uint16_t width,
+            uint16_t height,
+            const Color* pixels
+        ) = 0;
+
         // Text rendering.
         virtual void drawText(
             int16_t x,

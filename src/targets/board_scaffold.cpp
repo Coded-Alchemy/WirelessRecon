@@ -1,4 +1,3 @@
-
 #include <Arduino.h>
 
 #include "hardware/BoardProfile.h"
@@ -11,6 +10,14 @@
 #include "hardware/touch/TouchManager.h"
 #include "hardware/touch/drivers/FT6236Touch.h"
 
+#include "ui/lvgl/LVGLManager.h"
+
+#ifdef WR_ENABLE_HARDWARE_DIAGNOSTICS
+#include "diagnostics/BoardDiagnostics.h"
+#include "diagnostics/DisplayDiagnostics.h"
+#include "diagnostics/TouchDiagnostics.h"
+#endif
+
 using namespace wirelessrecon::hardware;
 using namespace wirelessrecon::hardware::display;
 using namespace wirelessrecon::hardware::touch;
@@ -18,223 +25,143 @@ using namespace wirelessrecon::hardware::touch;
 namespace {
 
     // --------------------------------------------------------
-    // Display components
+    // Hardware instances
     // --------------------------------------------------------
 
     DisplayConfig displayConfig;
     LovyanGFXDisplay display(displayConfig);
     DisplayManager displayManager(display);
 
-    // --------------------------------------------------------
-    // Touch components
-    // --------------------------------------------------------
-
     TouchConfig touchConfig;
     FT6236Touch touch(touchConfig);
     TouchManager touchManager(touch);
 
-    // Touch diagnostic state
-    bool previousTouchState = false;
-    uint16_t previousX = 0;
-    uint16_t previousY = 0;
-
     // --------------------------------------------------------
-    // Board information
+    // Application manager
     // --------------------------------------------------------
 
-    void printBoardInformation() {
+    wirelessrecon::ui::lvgl::LVGLManager lvglManager(
+        displayManager,
+        touchManager
+    );
 
-        Serial.println();
-        Serial.println("================================");
-        Serial.println(" WirelessRecon Board Profile");
-        Serial.println("================================");
+    // --------------------------------------------------------
+    // Optional diagnostic instances
+    // --------------------------------------------------------
 
-        Serial.printf("Board: %s\n", kBoardName);
-        Serial.printf("WiFi: %s\n", kHasWifi ? "yes" : "no");
-        Serial.printf("BLE: %s\n", kHasBle ? "yes" : "no");
+#ifdef WR_ENABLE_HARDWARE_DIAGNOSTICS
 
-        Serial.printf(
-            "Bluetooth Classic: %s\n",
-            kHasBluetoothClassic ? "yes" : "no"
-        );
+    wirelessrecon::diagnostics::DisplayDiagnostics
+        displayDiagnostics(displayManager);
 
-        Serial.printf("PSRAM: %s\n", kHasPsram ? "yes" : "no");
-        Serial.printf("Display: %s\n", kHasDisplay ? "yes" : "no");
+    wirelessrecon::diagnostics::TouchDiagnostics
+        touchDiagnostics(touchManager);
 
-        if (kHasDisplay) {
-            Serial.printf(
-                "Resolution: %u x %u\n",
-                kDisplayWidth,
-                kDisplayHeight
-            );
+#endif
 
-            Serial.printf("Touch: %s\n", kHasTouch ? "yes" : "no");
+    // --------------------------------------------------------
+    // Hardware initialization
+    // --------------------------------------------------------
 
-            Serial.printf(
-                "Resistive Touch: %s\n",
-                kHasResistiveTouch ? "yes" : "no"
-            );
+    bool initializeDisplay() {
 
-            Serial.printf("Display notes: %s\n", kDisplayNotes);
+        Serial.println("[DISPLAY] Initializing display...");
+
+        if (!kHasDisplay) {
+            Serial.println("[DISPLAY] Board has no display.");
+            return false;
         }
 
-        Serial.println("================================");
-    }
-
-    // --------------------------------------------------------
-    // Display test
-    // --------------------------------------------------------
-
-    void testDisplay() {
-
-        Serial.println();
-        Serial.println("[DISPLAY] Starting display initialization...");
-
         if (!makeDisplayConfig(displayConfig)) {
-            Serial.println("[DISPLAY] Configuration unavailable.");
-            return;
+            Serial.println(
+                "[DISPLAY] Configuration unavailable."
+            );
+            return false;
         }
 
         if (!displayManager.begin()) {
-            Serial.println("[DISPLAY] Initialization failed.");
-            return;
-        }
-
-        IDisplay& screen = displayManager.display();
-
-        Serial.println("[DISPLAY] Initialization successful.");
-
-        screen.clear(Colors::Black);
-
-        screen.drawRect(
-            2,
-            2,
-            screen.width() - 4,
-            screen.height() - 4,
-            Colors::White
-        );
-
-        const int16_t barWidth = screen.width() / 4;
-        const int16_t barHeight = 30;
-        const int16_t barY = 50;
-
-        screen.fillRect(
-            0, barY, barWidth, barHeight, Colors::Red
-        );
-
-        screen.fillRect(
-            barWidth, barY, barWidth, barHeight, Colors::Green
-        );
-
-        screen.fillRect(
-            barWidth * 2, barY, barWidth, barHeight, Colors::Blue
-        );
-
-        screen.fillRect(
-            barWidth * 3,
-            barY,
-            screen.width() - (barWidth * 3),
-            barHeight,
-            Colors::Yellow
-        );
-
-        screen.drawText(
-            20, 100, "WirelessRecon",
-            Colors::White, Colors::Black
-        );
-
-        screen.drawText(
-            20, 130, "Display abstraction OK",
-            Colors::White, Colors::Black
-        );
-
-        Serial.println("[DISPLAY] Test pattern rendered.");
-    }
-
-    // --------------------------------------------------------
-    // Touch initialization
-    // --------------------------------------------------------
-
-    void testTouch() {
-
-        Serial.println();
-        Serial.println("[TOUCH] Starting touch initialization...");
-
-        if (!kHasTouch) {
-            Serial.println("[TOUCH] Board has no touch controller.");
-            return;
-        }
-
-        if (!makeTouchConfig(touchConfig)) {
-            Serial.println("[TOUCH] Configuration unavailable.");
-            return;
+            Serial.println(
+                "[DISPLAY] Initialization failed."
+            );
+            return false;
         }
 
         Serial.printf(
-            "[TOUCH] Controller: FT6236\n"
-            "[TOUCH] SDA: %d\n"
-            "[TOUCH] SCL: %d\n"
-            "[TOUCH] I2C address: 0x%02X\n"
-            "[TOUCH] Resolution: %u x %u\n",
-            touchConfig.pinSda,
-            touchConfig.pinScl,
-            touchConfig.i2cAddress,
-            touchConfig.width,
-            touchConfig.height
+            "[DISPLAY] Ready: %u x %u\n",
+            displayManager.display().width(),
+            displayManager.display().height()
         );
+
+        return true;
+    }
+
+    bool initializeTouch() {
+
+        Serial.println("[TOUCH] Initializing touch...");
+
+        if (!kHasTouch) {
+            Serial.println("[TOUCH] Board has no touch controller.");
+            return false;
+        }
+
+        if (!makeTouchConfig(touchConfig)) {
+            Serial.println(
+                "[TOUCH] Configuration unavailable."
+            );
+            return false;
+        }
 
         if (!touchManager.begin()) {
             Serial.println(
-                "[TOUCH] Initialization failed. "
-                "Check I2C wiring and controller response."
+                "[TOUCH] Initialization failed."
             );
-            return;
+            return false;
         }
 
         touchManager.setRotation(0);
 
-        Serial.println("[TOUCH] Initialization successful.");
-        Serial.println("[TOUCH] Touch the screen to test coordinates.");
+        Serial.println("[TOUCH] Ready.");
+
+        return true;
     }
 
     // --------------------------------------------------------
-    // Touch polling
+    // LVGL application initialization
     // --------------------------------------------------------
 
-    void pollTouch() {
+    bool initializeLVGL() {
 
-        if (!touchManager.isInitialized()) {
-            return;
+        if (!kHasDisplay || !kHasTouch) {
+            Serial.println(
+                "[LVGL] This target requires display and touch."
+            );
+            return false;
         }
 
-        TouchPoint point;
+        if (!displayManager.isInitialized() ||
+            !touchManager.isInitialized()) {
 
-        const bool touched = touchManager.read(point);
+            Serial.println(
+                "[LVGL] Display or touch is not initialized."
+            );
 
-        if (touched && point.touched) {
-
-            // Print only when touch begins or coordinates change.
-            if (!previousTouchState ||
-                point.x != previousX ||
-                point.y != previousY) {
-
-                Serial.printf(
-                    "[TOUCH] X: %u | Y: %u\n",
-                    point.x,
-                    point.y
-                );
-            }
-
-            previousX = point.x;
-            previousY = point.y;
-            previousTouchState = true;
-
-        } else if (previousTouchState) {
-
-            Serial.println("[TOUCH] Released.");
-            previousTouchState = false;
+            return false;
         }
+
+        Serial.println("[LVGL] Starting application...");
+
+        if (!lvglManager.begin()) {
+            Serial.println(
+                "[LVGL] Initialization failed."
+            );
+            return false;
+        }
+
+        Serial.println("[LVGL] Application ready.");
+
+        return true;
     }
+
 }
 
 // ============================================================
@@ -246,20 +173,62 @@ void setup() {
     Serial.begin(115200);
     delay(500);
 
-    printBoardInformation();
+    Serial.println();
+    Serial.println("================================");
+    Serial.println(" WirelessRecon Modular Firmware");
+    Serial.println("================================");
 
-    if (kHasDisplay) {
-        testDisplay();
+#ifdef WR_ENABLE_HARDWARE_DIAGNOSTICS
+    wirelessrecon::diagnostics::printBoardInformation();
+#endif
+
+    const bool displayReady = initializeDisplay();
+    const bool touchReady = initializeTouch();
+
+    if (!displayReady || !touchReady) {
+        Serial.println(
+            "[SYSTEM] Hardware initialization incomplete."
+        );
+        return;
     }
 
-    if (kHasTouch) {
-        testTouch();
-    }
+#ifdef WR_ENABLE_HARDWARE_DIAGNOSTICS
+
+    // Diagnostic mode:
+    // Test the display and leave touch polling to diagnostics.
+    displayDiagnostics.run();
+
+    Serial.println();
+    Serial.println(
+        "[DIAGNOSTICS] Hardware diagnostic mode active."
+    );
+    Serial.println(
+        "[DIAGNOSTICS] Touch the display to test coordinates."
+    );
+
+#else
+
+    // Normal application mode:
+    // LVGL owns touch input and display rendering.
+    initializeLVGL();
+
+#endif
 }
 
 void loop() {
 
-    pollTouch();
+#ifdef WR_ENABLE_HARDWARE_DIAGNOSTICS
 
+    touchDiagnostics.poll();
     delay(20);
+
+#else
+
+    if (lvglManager.isInitialized()) {
+        lvglManager.handle();
+    } else {
+        delay(20);
+    }
+
+#endif
 }
