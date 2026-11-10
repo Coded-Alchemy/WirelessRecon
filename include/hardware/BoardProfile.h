@@ -1,38 +1,8 @@
-
 #pragma once
 
-#include <cstdint>
+#include "hardware/HardwareTypes.h"
 
 namespace wirelessrecon::hardware {
-
-    // ============================================================
-    // Hardware types
-    // ============================================================
-
-    enum class DisplayController : uint8_t {
-        Unknown,
-        ILI9341,
-        ILI9488
-    };
-
-    enum class TouchController : uint8_t {
-        None,
-        Unknown,
-        FT6236,
-        XPT2046
-    };
-
-    enum class DisplayBus : uint8_t {
-        Unknown,
-        SPI,
-        Parallel
-    };
-
-    enum class TouchBus : uint8_t {
-        Unknown,
-        I2C,
-        SPI
-    };
 
     // ============================================================
     // Board selection
