@@ -1,5 +1,9 @@
 # Dev Instructions
 
+To clean
+
+```pio run -e thingpulse_wrover_modular -t clean```
+
 To compile:
 
 ```pio run -e thingpulse_wrover_modular```

@@ -11,6 +11,8 @@
 #include "hardware/touch/TouchManager.h"
 #include "hardware/touch/drivers/FT6236Touch.h"
 
+#include "ui/lvgl/LVGLManager.h"
+
 using namespace wirelessrecon::hardware;
 using namespace wirelessrecon::hardware::display;
 using namespace wirelessrecon::hardware::touch;
@@ -32,6 +34,12 @@ namespace {
     TouchConfig touchConfig;
     FT6236Touch touch(touchConfig);
     TouchManager touchManager(touch);
+
+    // LVGL application manager
+    wirelessrecon::ui::lvgl::LVGLManager lvglManager(
+        displayManager,
+        touchManager
+    );
 
     // Touch diagnostic state
     bool previousTouchState = false;
@@ -198,6 +206,34 @@ namespace {
     }
 
     // --------------------------------------------------------
+    // LVGL initialization
+    // --------------------------------------------------------
+
+    void testLVGL() {
+        if (!kHasDisplay || !kHasTouch) {
+            Serial.println(
+                "[LVGL] This Phase 4 target requires display and touch."
+            );
+            return;
+        }
+
+        if (!displayManager.isInitialized() ||
+            !touchManager.isInitialized()) {
+            Serial.println(
+                "[LVGL] Display or touch hardware is not initialized."
+            );
+            return;
+        }
+
+        if (!lvglManager.begin()) {
+            Serial.println("[LVGL] Initialization failed.");
+            return;
+        }
+
+        Serial.println("[LVGL] Test interface is running.");
+    }
+
+    // --------------------------------------------------------
     // Touch polling
     // --------------------------------------------------------
 
@@ -255,11 +291,16 @@ void setup() {
     if (kHasTouch) {
         testTouch();
     }
+
+    testLVGL();
 }
 
 void loop() {
+    if (lvglManager.isInitialized()) {
+        lvglManager.handle();
+        return;
+    }
 
     pollTouch();
-
     delay(20);
 }

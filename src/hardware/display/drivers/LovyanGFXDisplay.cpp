@@ -296,6 +296,34 @@ void LovyanGFXDisplay::fillRect(
 }
 
 // ============================================================
+// Push RGB565 pixel rectangle
+// ============================================================
+
+void LovyanGFXDisplay::pushPixels(
+    int16_t x,
+    int16_t y,
+    uint16_t width,
+    uint16_t height,
+    const Color* pixels
+) {
+
+    if (!initialized_ || pixels == nullptr || width == 0 || height == 0) {
+        return;
+    }
+
+    // LVGL supplies RGB565 pixels in the ESP32's native little-endian
+    // representation. LovyanGFX can retain byte-swap state between image
+    // operations, so force native byte order for every LVGL transfer.
+    device_.setSwapBytes(true);
+
+    // The SPI bus is configured with DMA. Do not return the LVGL draw buffer
+    // to LVGL until the display has finished consuming it; LVGL may reuse the
+    // same partial-render buffer immediately after flush_ready().
+    device_.pushImage(x, y, width, height, pixels);
+    device_.waitDMA();
+}
+
+// ============================================================
 // Draw text
 // ============================================================
 
