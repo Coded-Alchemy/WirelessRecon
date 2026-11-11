@@ -25,6 +25,7 @@
 #include "diagnostics/BoardDiagnostics.h"
 #include "diagnostics/DisplayDiagnostics.h"
 #include "diagnostics/TouchDiagnostics.h"
+#include "diagnostics/WifiDiagnostics.h"
 #endif
 
 using namespace wirelessrecon::hardware;
@@ -107,6 +108,8 @@ wirelessrecon::diagnostics::DisplayDiagnostics displayDiagnostics(
 wirelessrecon::diagnostics::TouchDiagnostics touchDiagnostics(
     touchManager
 );
+
+wirelessrecon::diagnostics::WifiDiagnostics* wifiDiagnostics = nullptr;
 
 #endif
 
@@ -357,6 +360,40 @@ void processRadios() {
     }
 }
 
+#ifdef WR_ENABLE_HARDWARE_DIAGNOSTICS
+
+// ============================================================
+// Wi-Fi diagnostic initialization
+// ============================================================
+
+bool initializeWifiDiagnostics() {
+    if (wirelessCoordinator == nullptr ||
+        deviceInventory == nullptr) {
+        Serial.println(
+            "[DIAGNOSTICS][WIFI] Core radio services unavailable."
+        );
+        return false;
+    }
+
+    wifiDiagnostics =
+        new (std::nothrow) wirelessrecon::diagnostics::WifiDiagnostics(
+            wifiScanner,
+            *wirelessCoordinator,
+            *deviceInventory
+        );
+
+    if (wifiDiagnostics == nullptr) {
+        Serial.println(
+            "[DIAGNOSTICS][WIFI] Failed to allocate diagnostics."
+        );
+        return false;
+    }
+
+    return wifiDiagnostics->begin();
+}
+
+#endif
+
 } // namespace
 
 // ============================================================
@@ -409,6 +446,8 @@ void setup() {
         "[DIAGNOSTICS] Touch the display to test coordinates."
     );
 
+    initializeWifiDiagnostics();
+
 #else
 
     // Normal application mode.
@@ -427,6 +466,11 @@ void loop() {
 #ifdef WR_ENABLE_HARDWARE_DIAGNOSTICS
 
     touchDiagnostics.poll();
+
+    if (wifiDiagnostics != nullptr) {
+        wifiDiagnostics->poll();
+    }
+
     delay(20);
 
 #else
