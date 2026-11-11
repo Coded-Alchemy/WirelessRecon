@@ -1,3 +1,4 @@
+
 #include "hardware/radio/WifiScanner.h"
 
 #include <Arduino.h>
@@ -12,6 +13,12 @@ namespace wirelessrecon::hardware::radio {
     using core::Device;
     using core::RadioType;
     using core::ScannerState;
+
+    namespace {
+        // Arduino-ESP32 2.0.14 calculates its asynchronous scan timeout
+        // as max_ms_per_chan * 20. The 600 ms setting gives 12 seconds.
+        constexpr uint32_t kMaxMsPerChannel = 600;
+    }
 
     WifiScanner::WifiScanner(core::ObservationQueue& observations)
         : observations_(observations) {
@@ -28,7 +35,6 @@ namespace wirelessrecon::hardware::radio {
 
         diagnostics_ = WifiScanDiagnostics{};
 
-        // Configure station mode without connecting to an access point.
         diagnostics_.stationModeReady = WiFi.mode(WIFI_STA);
 
         if (!diagnostics_.stationModeReady) {
@@ -39,11 +45,19 @@ namespace wirelessrecon::hardware::radio {
         WiFi.disconnect(false, false);
         delay(100);
 
-        // Release results left by a previous scan.
         WiFi.scanDelete();
 
-        // Start an asynchronous scan and include hidden networks.
-        diagnostics_.scanStartResult = WiFi.scanNetworks(true, true);
+        // Arguments:
+        //   true  = asynchronous scan
+        //   true  = include hidden networks
+        //   false = active scan
+        //   600   = maximum scan time per channel in milliseconds
+        diagnostics_.scanStartResult = WiFi.scanNetworks(
+            true,
+            true,
+            false,
+            kMaxMsPerChannel
+        );
 
         if (diagnostics_.scanStartResult == WIFI_SCAN_RUNNING ||
             diagnostics_.scanStartResult >= 0) {
@@ -57,8 +71,6 @@ namespace wirelessrecon::hardware::radio {
 
     void WifiScanner::stop() {
         if (state_ == ScannerState::Running) {
-            // The Arduino scan API does not provide a portable
-            // cancellation operation. Discard results when it finishes.
             state_ = ScannerState::Stopping;
         }
     }
@@ -92,8 +104,6 @@ namespace wirelessrecon::hardware::radio {
 
         diagnostics_.scanCompletionResult = result;
 
-        // A cancellation discards the scan rather than submitting
-        // partial results to the inventory.
         if (state_ == ScannerState::Stopping) {
             WiFi.scanDelete();
             state_ = ScannerState::Idle;
@@ -108,11 +118,7 @@ namespace wirelessrecon::hardware::radio {
 
         collectResults(result);
 
-        // Release the Arduino Wi-Fi scan result buffer.
         WiFi.scanDelete();
-
-        // Completed is reported only after all observations have been
-        // submitted to the queue.
         state_ = ScannerState::Completed;
     }
 
@@ -168,7 +174,6 @@ namespace wirelessrecon::hardware::radio {
             observation.wifi.encryption = encryption;
             observation.wifi.hidden = ssid.length() == 0;
 
-            // Mark networks sharing the same visible SSID.
             if (ssid.length() > 0) {
                 for (int16_t other = 0; other < networkCount; ++other) {
                     if (other != index && WiFi.SSID(other) == ssid) {
@@ -178,8 +183,6 @@ namespace wirelessrecon::hardware::radio {
                 }
             }
 
-            // The queue owns accepted observations. Inventory updates
-            // remain the responsibility of WirelessCoordinator.
             if (observations_.tryPush(std::move(observation))) {
                 ++diagnostics_.observationsQueued;
             } else {
