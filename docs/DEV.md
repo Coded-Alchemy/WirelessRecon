@@ -19,3 +19,7 @@ To Monitor
 To see device list
 
 ```pio device list```
+
+To run tests
+
+```pio test -e native_tests -v```
