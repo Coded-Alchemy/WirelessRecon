@@ -1,7 +1,3 @@
-//
-// Created by dedlee on 11/11/26.
-//
-
 #pragma once
 
 #include "core/DeviceInventory.h"
@@ -13,9 +9,9 @@ namespace wirelessrecon::diagnostics {
     /**
      * Runs Wi-Fi hardware diagnostics through the normal radio lifecycle.
      *
-     * This module does not perform Wi-Fi scanning itself. It uses
-     * WifiScanner and WirelessCoordinator so diagnostic behavior exercises
-     * the same implementation used by the normal application.
+     * This module does not perform Wi-Fi scanning itself. It uses WifiScanner
+     * and WirelessCoordinator so diagnostic behavior exercises the same
+     * implementation used by the normal application.
      */
     class WifiDiagnostics {
     public:
@@ -31,12 +27,16 @@ namespace wirelessrecon::diagnostics {
         /** Advances the scan and reports its final results. */
         void poll();
 
+        /** True after the scan succeeds, fails, or cannot be started. */
+        bool finished() const;
+
     private:
         hardware::radio::WifiScanner& scanner_;
         core::WirelessCoordinator& coordinator_;
         core::DeviceInventory& inventory_;
 
         bool started_ = false;
+        bool finished_ = false;
 
         void printScanStatistics() const;
     };

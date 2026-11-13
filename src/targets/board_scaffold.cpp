@@ -11,6 +11,15 @@
 
 #include "hardware/radio/WifiScanner.h"
 
+#if defined(WR_BOARD_THINGPULSE_WROVER) || \
+    defined(WR_BOARD_ESP32_32E)
+
+#define WR_HAS_BLUEDROID_BLE_SCANNER
+
+#include "hardware/radio/BleScanner.h"
+
+#endif
+
 #include "hardware/display/DisplayConfigFactory.h"
 #include "hardware/display/DisplayManager.h"
 #include "hardware/display/drivers/LovyanGFXDisplay.h"
@@ -22,10 +31,16 @@
 #include "ui/lvgl/LVGLManager.h"
 
 #ifdef WR_ENABLE_HARDWARE_DIAGNOSTICS
+
 #include "diagnostics/BoardDiagnostics.h"
 #include "diagnostics/DisplayDiagnostics.h"
 #include "diagnostics/TouchDiagnostics.h"
 #include "diagnostics/WifiDiagnostics.h"
+
+#ifdef WR_HAS_BLUEDROID_BLE_SCANNER
+#include "diagnostics/BleDiagnostics.h"
+#endif
+
 #endif
 
 using namespace wirelessrecon::hardware;
@@ -95,6 +110,14 @@ wirelessrecon::hardware::radio::WifiScanner wifiScanner(
     observationQueue
 );
 
+#ifdef WR_HAS_BLUEDROID_BLE_SCANNER
+
+wirelessrecon::hardware::radio::BleScanner bleScanner(
+    observationQueue
+);
+
+#endif
+
 // ============================================================
 // Optional diagnostic instances
 // ============================================================
@@ -110,6 +133,14 @@ wirelessrecon::diagnostics::TouchDiagnostics touchDiagnostics(
 );
 
 wirelessrecon::diagnostics::WifiDiagnostics* wifiDiagnostics = nullptr;
+
+#ifdef WR_HAS_BLUEDROID_BLE_SCANNER
+
+wirelessrecon::diagnostics::BleDiagnostics* bleDiagnostics = nullptr;
+
+bool bleDiagnosticsAttempted = false;
+
+#endif
 
 #endif
 
@@ -300,6 +331,24 @@ bool initializeRadios() {
 
     Serial.println("[RADIO] Wi-Fi scanner registered.");
 
+#ifdef WR_HAS_BLUEDROID_BLE_SCANNER
+
+    if (radioCapabilities.ble) {
+        if (!wirelessCoordinator->registerScanner(bleScanner)) {
+            Serial.println(
+                "[RADIO] BLE scanner registration failed."
+            );
+            return false;
+        }
+
+        Serial.println(
+            "[RADIO] BLE scanner registered. Bluedroid remains uninitialized."
+        );
+    }
+
+#endif
+
+    // Preserve the existing normal-mode startup behavior: start Wi-Fi only.
     const auto result = wirelessCoordinator->requestScan(
         wirelessrecon::core::RadioType::Wifi
     );
@@ -328,11 +377,12 @@ void processRadios() {
         return;
     }
 
-    // Poll the hardware adapter first so any final observations are
+    // Poll the Wi-Fi hardware adapter first so final observations are
     // submitted before the coordinator evaluates scanner completion.
     wifiScanner.poll();
 
-    // Capture terminal state before process() resets the scanner.
+    // BLE completion is delivered asynchronously by the Bluedroid GAP
+    // callback. Its state is read by the coordinator during process().
     const auto scannerState = wifiScanner.state();
 
     const std::size_t accepted = wirelessCoordinator->process();
@@ -392,6 +442,51 @@ bool initializeWifiDiagnostics() {
     return wifiDiagnostics->begin();
 }
 
+#ifdef WR_HAS_BLUEDROID_BLE_SCANNER
+
+// ============================================================
+// BLE diagnostic initialization
+// ============================================================
+
+void startBleDiagnosticsAfterWifi() {
+    if (bleDiagnosticsAttempted) {
+        return;
+    }
+
+    // Do not start BLE until the Wi-Fi diagnostic scan has reached a
+    // terminal state. This gives us a clean first coexistence test.
+    if (wifiDiagnostics != nullptr &&
+        !wifiDiagnostics->finished()) {
+        return;
+    }
+
+    bleDiagnosticsAttempted = true;
+
+    if (!radioCapabilities.ble) {
+        Serial.println(
+            "[DIAGNOSTICS][BLE] BLE is not supported by this board."
+        );
+        return;
+    }
+
+    bleDiagnostics =
+        new (std::nothrow) wirelessrecon::diagnostics::BleDiagnostics(
+            bleScanner,
+            *wirelessCoordinator,
+            *deviceInventory
+        );
+
+    if (bleDiagnostics == nullptr) {
+        Serial.println(
+            "[DIAGNOSTICS][BLE] Failed to allocate diagnostics."
+        );
+        return;
+    }
+
+    bleDiagnostics->begin();
+}
+
+#endif
 #endif
 
 } // namespace
@@ -446,6 +541,7 @@ void setup() {
         "[DIAGNOSTICS] Touch the display to test coordinates."
     );
 
+    // Wi-Fi diagnostics run first. BLE diagnostics begin after Wi-Fi ends.
     initializeWifiDiagnostics();
 
 #else
@@ -470,6 +566,16 @@ void loop() {
     if (wifiDiagnostics != nullptr) {
         wifiDiagnostics->poll();
     }
+
+#ifdef WR_HAS_BLUEDROID_BLE_SCANNER
+
+    startBleDiagnosticsAfterWifi();
+
+    if (bleDiagnostics != nullptr) {
+        bleDiagnostics->poll();
+    }
+
+#endif
 
     delay(20);
 
