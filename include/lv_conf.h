@@ -56,7 +56,7 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
 /** Size of the pool `lv_malloc()` allocates from. Needs to be at least 2kB (2048). */
-#define LV_MEM_SIZE 65536
+#define LV_MEM_SIZE 49152
 
 /** Place the pool at a fixed address instead of allocating it as a normal array.
  *  0: unused.
