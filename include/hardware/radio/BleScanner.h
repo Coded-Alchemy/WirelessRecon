@@ -1,7 +1,3 @@
-//
-// Created by dedlee on 11/12/26.
-//
-
 #pragma once
 
 #include <atomic>
@@ -60,9 +56,7 @@ private:
         : public BLEAdvertisedDeviceCallbacks {
     public:
         explicit AdvertisedDeviceCallbacks(BleScanner& owner);
-
         void onResult(BLEAdvertisedDevice advertisedDevice) override;
-
     private:
         BleScanner& owner_;
     };
@@ -70,12 +64,9 @@ private:
     static constexpr uint32_t kScanDurationSeconds = 10;
 
     core::ObservationQueue& observations_;
-
-    std::atomic<core::ScannerState> state_{
-        core::ScannerState::Idle
-    };
-
+    std::atomic<core::ScannerState> state_{core::ScannerState::Idle};
     std::atomic<bool> initializationAttempted_{false};
+    std::atomic<bool> scanStarted_{false};
 
     std::atomic<std::size_t> devicesDiscovered_{0};
     std::atomic<std::size_t> observationsQueued_{0};
@@ -84,15 +75,11 @@ private:
     BLEScan* scan_ = nullptr;
     AdvertisedDeviceCallbacks callbacks_;
 
-    // The bundled Arduino Bluedroid API uses a plain function pointer for
-    // scan completion. Only one BLE scan can be active on this controller.
     static std::atomic<BleScanner*> activeScanner_;
 
     bool ensureBluetoothStackReady();
-
     void handleAdvertisedDevice(BLEAdvertisedDevice advertisedDevice);
     void handleScanComplete();
-
     static void onScanComplete(BLEScanResults results);
 };
 
