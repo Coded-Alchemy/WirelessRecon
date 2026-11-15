@@ -1,43 +1,36 @@
-//
-// Created by dedlee on 11/15/26.
-//
-
 
 /**
  * @file DashboardScreen.h
- * @brief Dashboard presentation component for WirelessRecon.
+ * @brief Primary WirelessRecon dashboard presentation component.
  *
- * @details
- * DashboardScreen renders the primary application overview.
+ * The dashboard provides a concise operational overview:
+ * - Wi-Fi, BLE, and Bluetooth Classic inventory counts.
+ * - Direct Wi-Fi and BLE scan actions.
+ * - A single status area positioned above the scan controls.
  *
- * Responsibilities:
- * - Display Wi-Fi, BLE, and Bluetooth Classic inventory counts.
- * - Display total discovered devices.
- * - Provide user controls for supported scan requests.
- * - Display current scan activity and request results.
+ * It deliberately does not display a redundant total-inventory metric.
+ * Radio-specific device exploration belongs on the corresponding radio
+ * screens rather than being duplicated on the dashboard.
  *
- * Architectural boundaries:
+ * Architecture:
  * - WirelessCoordinator owns scan orchestration.
  * - DeviceInventory owns discovered-device records.
- * - DashboardScreen only reads inventory state and submits scan requests.
- * - DashboardScreen never creates or owns radio scanner implementations.
+ * - DashboardScreen reads inventory and submits scan requests.
+ * - DashboardScreen does not own or access radio scanner implementations.
  *
  * Ownership:
- * - The LVGL screen parent owns all widgets created by this component.
- * - The component retains non-owning pointers to its generated widgets.
- * - The coordinator and inventory references must outlive this component.
+ * - LVGL owns the widget tree created beneath the supplied parent.
+ * - This component retains non-owning widget pointers.
+ * - Coordinator and inventory references must outlive this component.
  *
  * Threading:
- * - All public methods must be called from the LVGL-owning application task.
+ * - All public methods must be called from the LVGL application task.
  * - Radio callbacks must never modify LVGL objects directly.
- *
- * Lifecycle:
- *   bind() -> create() -> refresh()
- *
- * The component may be recreated when the application changes screens.
  */
 
 #pragma once
+
+#include <cstdint>
 
 #include <lvgl.h>
 
@@ -46,7 +39,7 @@
 
 namespace wirelessrecon::ui::screens {
 
-class DashboardScreen {
+class DashboardScreen final {
 public:
     DashboardScreen() = default;
 
@@ -54,12 +47,10 @@ public:
     DashboardScreen& operator=(const DashboardScreen&) = delete;
 
     /**
-     * @brief Connects the dashboard to existing application services.
+     * @brief Binds the dashboard to existing application services.
      *
-     * @param coordinator Existing wireless scan coordinator.
-     * @param inventory Existing device inventory.
-     *
-     * @note Neither service is owned or deleted by DashboardScreen.
+     * The supplied services are non-owning references. Their lifetime is
+     * controlled by the application composition root.
      */
     void bind(
         core::WirelessCoordinator& coordinator,
@@ -67,29 +58,22 @@ public:
     );
 
     /**
-     * @brief Creates dashboard widgets inside the supplied LVGL parent.
+     * @brief Creates the dashboard widget tree.
      *
-     * @param parent LVGL object that owns the dashboard widgets.
+     * All dashboard widgets are created beneath the component's root
+     * container. The root owns the dashboard layout and scrolling.
      *
-     * @return true when the dashboard has been created.
+     * The scan status panel is placed above the scan controls.
      *
-     * @pre bind() must have been called.
-     * @pre parent must be a valid LVGL object.
-     *
-     * Calling create() again replaces the component's widget references.
-     * The parent is responsible for cleaning up its previous children.
+     * @param parent LVGL parent, normally the active LVGL screen.
+     * @return true when dashboard creation succeeds.
      */
     bool create(lv_obj_t* parent);
 
     /**
-     * @brief Updates displayed counts and scan status.
+     * @brief Refreshes radio counts and scan activity.
      *
-     * @details
-     * This method reads authoritative values from DeviceInventory.
-     * It does not initiate scans or process radio observations.
-     *
-     * Call periodically from the LVGL application task rather than from
-     * an asynchronous scanner callback.
+     * Must be called from the LVGL application task.
      */
     void refresh();
 
@@ -97,45 +81,41 @@ private:
     core::WirelessCoordinator* coordinator_ = nullptr;
     core::DeviceInventory* inventory_ = nullptr;
 
+    // Root container and its child widgets are owned by LVGL.
+    lv_obj_t* root_ = nullptr;
+
+    // Radio metric value labels.
     lv_obj_t* wifiCountLabel_ = nullptr;
     lv_obj_t* bleCountLabel_ = nullptr;
     lv_obj_t* classicCountLabel_ = nullptr;
-    lv_obj_t* totalCountLabel_ = nullptr;
+
+    // Scan feedback.
     lv_obj_t* scanStatusLabel_ = nullptr;
 
-    /**
-     * Root container for this dashboard.
-     *
-     * LVGL owns this object and its child widget tree. This class keeps
-     * a non-owning pointer so refresh and layout operations can access it.
-     */
-    lv_obj_t* root_ = nullptr;
+    // Tracks a running scan so completion can be reported once.
+    bool scanWasActive_ = false;
 
     /**
-     * @brief Identifies the requested radio for a scan-button event.
+     * @brief Creates one radio metric card.
      *
-     * The event callback receives this component through LVGL user data.
-     * It forwards the request to WirelessCoordinator.
+     * @param parent Parent metrics container.
+     * @param title Radio name.
+     * @param initialValue Initial displayed count.
+     * @return Value label, or nullptr if creation fails.
      */
-    static void scanButtonEventCallback(lv_event_t* event);
+    lv_obj_t* createMetricCard(
+        lv_obj_t* parent,
+        const char* title,
+        const char* initialValue
+    );
 
     /**
-     * @brief Requests a scan and updates the visible result message.
+     * @brief Creates a touch-friendly scan action.
      *
-     * @param radio Radio technology requested by the user.
-     *
-     * The coordinator validates board support, scanner availability,
-     * scanner state, and Bluetooth controller conflicts.
-     */
-    void requestScan(core::RadioType radio);
-
-    /**
-     * @brief Creates one scan button.
-     *
-     * @param parent Parent LVGL container.
-     * @param text Visible button text.
-     * @param radio Radio associated with the button.
-     * @return Newly created button, or nullptr on failure.
+     * @param parent Parent controls container.
+     * @param text Button label.
+     * @param radio Radio requested by the button.
+     * @return Created button, or nullptr.
      */
     lv_obj_t* createScanButton(
         lv_obj_t* parent,
@@ -143,24 +123,19 @@ private:
         core::RadioType radio
     );
 
-    /**
-     * @brief Creates a metric row and retains its value label.
-     *
-     * @param parent Parent LVGL container.
-     * @param title Human-readable metric title.
-     * @param value Initial metric value.
-     * @return Value label updated by refresh().
-     */
-    lv_obj_t* createMetricRow(
-        lv_obj_t* parent,
-        const char* title,
-        const char* value
-    );
+    /** LVGL event callback for scan-button presses. */
+    static void scanButtonEventCallback(lv_event_t* event);
 
-    /** Returns a user-facing message for a coordinator result. */
+    /** Forwards a user scan request to WirelessCoordinator. */
+    void requestScan(core::RadioType radio);
+
+    /** Returns concise feedback for a scan request result. */
     static const char* scanResultMessage(
         core::ScanRequestResult result
     );
+
+    /** Updates the single dashboard status label. */
+    void setStatus(const char* message);
 };
 
 } // namespace wirelessrecon::ui::screens
