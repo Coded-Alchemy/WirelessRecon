@@ -1,14 +1,12 @@
 
 #include <Arduino.h>
-#include <esp32-hal-psram.h>
 
-#include <cstddef>
 #include <new>
 
 #include "hardware/BoardProfile.h"
 
+#include "core/CoreMemoryServices.h"
 #include "core/DeviceInventory.h"
-#include "core/ObservationQueue.h"
 #include "core/WirelessCoordinator.h"
 
 #include "hardware/radio/WifiScanner.h"
@@ -58,6 +56,66 @@ using namespace wirelessrecon::hardware::touch;
 namespace {
 
 // ============================================================
+// Radio capabilities
+// ============================================================
+
+wirelessrecon::core::RadioCapabilities makeRadioCapabilities() {
+    wirelessrecon::core::RadioCapabilities capabilities;
+
+    capabilities.wifi = kHasWifi;
+    capabilities.ble = kHasBle;
+    capabilities.bluetoothClassic = kHasBluetoothClassic;
+
+    // Original ESP32 BLE and Bluetooth Classic share a controller.
+    capabilities.bluetoothControllerShared = true;
+
+    return capabilities;
+}
+
+wirelessrecon::core::RadioCapabilities radioCapabilities =
+    makeRadioCapabilities();
+
+// ============================================================
+// Core memory services
+// ============================================================
+
+// Owns ObservationQueue and manages the PSRAM inventory and
+// WirelessCoordinator lifetimes.
+wirelessrecon::core::CoreMemoryServices coreMemoryServices(
+    radioCapabilities
+);
+
+// Non-owning aliases used by the application components.
+wirelessrecon::core::DeviceInventory* deviceInventory = nullptr;
+
+wirelessrecon::core::WirelessCoordinator* wirelessCoordinator =
+    nullptr;
+
+// ============================================================
+// Radio subsystem
+// ============================================================
+
+wirelessrecon::hardware::radio::WifiScanner wifiScanner(
+    coreMemoryServices.observationQueue()
+);
+
+#ifdef WR_HAS_BLUEDROID_BLE_SCANNER
+
+wirelessrecon::hardware::radio::BleScanner bleScanner(
+    coreMemoryServices.observationQueue()
+);
+
+#endif
+
+#ifdef WR_MODULAR_BUILD
+
+// Non-owning controller around the existing radio services.
+wirelessrecon::hardware::radio::RadioController* radioController =
+    nullptr;
+
+#endif
+
+// ============================================================
 // Display hardware
 // ============================================================
 
@@ -81,58 +139,6 @@ wirelessrecon::ui::lvgl::LVGLManager lvglManager(
     displayManager,
     touchManager
 );
-
-// ============================================================
-// Radio subsystem
-// ============================================================
-
-// The queue and its mutex remain in internal RAM.
-wirelessrecon::core::ObservationQueue observationQueue;
-
-// The inventory is allocated in PSRAM during setup().
-wirelessrecon::core::DeviceInventory* deviceInventory = nullptr;
-
-// Construct the coordinator only after the inventory exists.
-wirelessrecon::core::WirelessCoordinator* wirelessCoordinator = nullptr;
-
-/**
- * Maps selected board capabilities into the portable core model.
- */
-wirelessrecon::core::RadioCapabilities makeRadioCapabilities() {
-    wirelessrecon::core::RadioCapabilities capabilities;
-
-    capabilities.wifi = kHasWifi;
-    capabilities.ble = kHasBle;
-    capabilities.bluetoothClassic = kHasBluetoothClassic;
-
-    // Original ESP32 BLE and Bluetooth Classic share a controller.
-    capabilities.bluetoothControllerShared = true;
-
-    return capabilities;
-}
-
-wirelessrecon::core::RadioCapabilities radioCapabilities =
-    makeRadioCapabilities();
-
-wirelessrecon::hardware::radio::WifiScanner wifiScanner(
-    observationQueue
-);
-
-#ifdef WR_HAS_BLUEDROID_BLE_SCANNER
-
-wirelessrecon::hardware::radio::BleScanner bleScanner(
-    observationQueue
-);
-
-#endif
-
-#ifdef WR_MODULAR_BUILD
-
-// Non-owning controller around the existing radio services.
-wirelessrecon::hardware::radio::RadioController* radioController =
-    nullptr;
-
-#endif
 
 // ============================================================
 // Optional diagnostic instances
@@ -164,58 +170,29 @@ bool bleDiagnosticsAttempted = false;
 // Core memory initialization
 // ============================================================
 
-/**
- * Creates the large historical device inventory in external PSRAM.
- *
- * DeviceInventory contains 150 Device objects, each of which includes
- * string fields. Keeping this storage out of internal DRAM leaves more
- * memory available for the display, LVGL, Wi-Fi, and Bluetooth stacks.
- *
- * The object is constructed only after Arduino has initialized PSRAM.
- */
 bool initializeCoreMemory() {
-    Serial.println("[MEMORY] Checking external PSRAM...");
-
-    if (!psramFound()) {
-        Serial.println("[MEMORY] PSRAM was not detected.");
-        return false;
-    }
-
-    Serial.printf(
-        "[MEMORY] PSRAM available: %u bytes\n",
-        static_cast<unsigned>(ESP.getPsramSize())
-    );
-
-    void* inventoryMemory = ps_malloc(
-        sizeof(wirelessrecon::core::DeviceInventory)
-    );
-
-    if (inventoryMemory == nullptr) {
+    if (!coreMemoryServices.begin()) {
         Serial.println(
-            "[MEMORY] Failed to allocate DeviceInventory in PSRAM."
+            "[SYSTEM] Core memory services initialization failed."
         );
         return false;
     }
 
-    // Placement-new constructs the DeviceInventory in the PSRAM block.
-    deviceInventory =
-        new (inventoryMemory) wirelessrecon::core::DeviceInventory();
-
+    // These pointers are non-owning. CoreMemoryServices controls
+    // their allocation and lifetime.
+    deviceInventory = coreMemoryServices.deviceInventory();
     wirelessCoordinator =
-        new (std::nothrow) wirelessrecon::core::WirelessCoordinator(
-            *deviceInventory,
-            observationQueue,
-            radioCapabilities
-        );
+        coreMemoryServices.wirelessCoordinator();
 
-    if (wirelessCoordinator == nullptr) {
+    if (deviceInventory == nullptr ||
+        wirelessCoordinator == nullptr) {
         Serial.println(
-            "[MEMORY] Failed to allocate WirelessCoordinator."
+            "[MEMORY] Core services returned invalid references."
         );
 
-        deviceInventory->~DeviceInventory();
-        free(deviceInventory);
+        coreMemoryServices.shutdown();
         deviceInventory = nullptr;
+        wirelessCoordinator = nullptr;
 
         return false;
     }
@@ -239,26 +216,14 @@ bool initializeCoreMemory() {
             "[MEMORY] Failed to allocate RadioController."
         );
 
-        delete wirelessCoordinator;
-        wirelessCoordinator = nullptr;
-
-        deviceInventory->~DeviceInventory();
-        free(deviceInventory);
+        coreMemoryServices.shutdown();
         deviceInventory = nullptr;
+        wirelessCoordinator = nullptr;
 
         return false;
     }
 
 #endif
-
-    Serial.printf(
-        "[MEMORY] DeviceInventory allocated in PSRAM: %u bytes\n",
-        static_cast<unsigned>(
-            sizeof(wirelessrecon::core::DeviceInventory)
-        )
-    );
-
-    Serial.println("[MEMORY] Core storage initialized.");
 
     wirelessrecon::diagnostics::MemoryDiagnostics::printSnapshot(
         "Core initialized"
@@ -357,10 +322,11 @@ bool initializeLVGL() {
 
     Serial.println("[LVGL] Starting application...");
 
-    // Bind the services created by initializeCoreMemory() before the
-    // dashboard is created. LVGLManager keeps non-owning references only.
-    if (wirelessCoordinator == nullptr || deviceInventory == nullptr) {
-        Serial.println("[LVGL] Core application services are unavailable.");
+    if (wirelessCoordinator == nullptr ||
+        deviceInventory == nullptr) {
+        Serial.println(
+            "[LVGL] Core application services are unavailable."
+        );
         return false;
     }
 
@@ -610,7 +576,8 @@ void setup() {
 
 #endif
 
-    // Allocate the large inventory before initializing display and LVGL.
+    // Initialize the queue, PSRAM inventory, coordinator, and
+    // modular radio controller before display and LVGL initialization.
     if (!initializeCoreMemory()) {
         Serial.println(
             "[SYSTEM] Core memory initialization failed."
