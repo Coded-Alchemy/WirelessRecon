@@ -13,6 +13,10 @@
 
 #include "hardware/radio/WifiScanner.h"
 
+#ifdef WR_MODULAR_BUILD
+#include "hardware/radio/RadioController.h"
+#endif
+
 #if defined(WR_BOARD_THINGPULSE_WROVER) || \
     defined(WR_BOARD_ESP32_32E)
 
@@ -122,6 +126,14 @@ wirelessrecon::hardware::radio::BleScanner bleScanner(
 
 #endif
 
+#ifdef WR_MODULAR_BUILD
+
+// Non-owning controller around the existing radio services.
+wirelessrecon::hardware::radio::RadioController* radioController =
+    nullptr;
+
+#endif
+
 // ============================================================
 // Optional diagnostic instances
 // ============================================================
@@ -207,6 +219,37 @@ bool initializeCoreMemory() {
 
         return false;
     }
+
+#ifdef WR_MODULAR_BUILD
+
+    radioController =
+        new (std::nothrow) wirelessrecon::hardware::radio::RadioController(
+            *wirelessCoordinator,
+            *deviceInventory,
+            wifiScanner
+#ifdef WR_HAS_BLUEDROID_BLE_SCANNER
+            , &bleScanner
+#else
+            , nullptr
+#endif
+        );
+
+    if (radioController == nullptr) {
+        Serial.println(
+            "[MEMORY] Failed to allocate RadioController."
+        );
+
+        delete wirelessCoordinator;
+        wirelessCoordinator = nullptr;
+
+        deviceInventory->~DeviceInventory();
+        free(deviceInventory);
+        deviceInventory = nullptr;
+
+        return false;
+    }
+
+#endif
 
     Serial.printf(
         "[MEMORY] DeviceInventory allocated in PSRAM: %u bytes\n",
@@ -345,19 +388,28 @@ bool initializeLVGL() {
 // ============================================================
 
 bool initializeRadios() {
+#ifdef WR_MODULAR_BUILD
+
+    if (radioController == nullptr) {
+        Serial.println("[RADIO] RadioController is unavailable.");
+        return false;
+    }
+
+    if (!radioController->begin()) {
+        return false;
+    }
+
+#else
+
     if (wirelessCoordinator == nullptr) {
-        Serial.println(
-            "[RADIO] Coordinator is unavailable."
-        );
+        Serial.println("[RADIO] Coordinator is unavailable.");
         return false;
     }
 
     Serial.println("[RADIO] Initializing radio subsystem...");
 
     if (!wirelessCoordinator->registerScanner(wifiScanner)) {
-        Serial.println(
-            "[RADIO] Wi-Fi scanner registration failed."
-        );
+        Serial.println("[RADIO] Wi-Fi scanner registration failed.");
         return false;
     }
 
@@ -367,20 +419,18 @@ bool initializeRadios() {
 
     if (radioCapabilities.ble) {
         if (!wirelessCoordinator->registerScanner(bleScanner)) {
-            Serial.println(
-                "[RADIO] BLE scanner registration failed."
-            );
+            Serial.println("[RADIO] BLE scanner registration failed.");
             return false;
         }
 
         Serial.println(
-            "[RADIO] BLE scanner registered. Bluedroid remains uninitialized."
+            "[RADIO] BLE scanner registered. "
+            "Bluedroid remains uninitialized."
         );
     }
 
 #endif
 
-    // Preserve the existing normal-mode startup behavior: start Wi-Fi only.
     const auto result = wirelessCoordinator->requestScan(
         wirelessrecon::core::RadioType::Wifi
     );
@@ -395,6 +445,8 @@ bool initializeRadios() {
     }
 
     Serial.println("[RADIO] Wi-Fi scan started.");
+
+#endif
 
     wirelessrecon::diagnostics::MemoryDiagnostics::printSnapshot(
         "Radios initialized and Wi-Fi scan started"
@@ -413,53 +465,30 @@ void processRadios() {
         return;
     }
 
-    static bool wifiCompletionMemoryReported = false;
+#ifdef WR_MODULAR_BUILD
 
-    static std::size_t previousWifiCount = 0;
-    static std::size_t previousBleCount = 0;
-    static std::size_t previousBluetoothClassicCount = 0;
-
-    // Poll the Wi-Fi hardware adapter first so final observations are
-    // submitted before the coordinator evaluates scanner completion.
-    wifiScanner.poll();
-
-    // Process all queued radio observations.
-    // The returned count is aggregate across registered scanners.
-    const std::size_t accepted = wirelessCoordinator->process();
-
-    // Retrieve inventory counts independently for each radio type.
-    const std::size_t wifiCount =
-        deviceInventory->count(
-            wirelessrecon::core::RadioType::Wifi
-        );
-
-    const std::size_t bleCount =
-        deviceInventory->count(
-            wirelessrecon::core::RadioType::Ble
-        );
-
-    const std::size_t bluetoothClassicCount =
-        deviceInventory->count(
-            wirelessrecon::core::RadioType::BluetoothClassic
-        );
-
-    // Do not attribute the aggregate accepted count to a specific radio.
-    if (accepted > 0) {
-        Serial.printf(
-            "[RADIO] Accepted %u observations. "
-            "Inventory: Wi-Fi=%u, BLE=%u, Bluetooth Classic=%u\n",
-            static_cast<unsigned>(accepted),
-            static_cast<unsigned>(wifiCount),
-            static_cast<unsigned>(bleCount),
-            static_cast<unsigned>(bluetoothClassicCount)
-        );
+    if (radioController == nullptr) {
+        return;
     }
 
-    // Report Wi-Fi scanner completion and failure independently.
+    radioController->process();
+
+#else
+
+    // Poll Wi-Fi before coordinator processing so completed results
+    // are submitted before scanner lifecycle transitions are evaluated.
+    wifiScanner.poll();
+    wirelessCoordinator->process();
+
+#endif
+
+    static bool wifiCompletionMemoryReported = false;
+
     const auto wifiState = wifiScanner.state();
 
     if (wifiState ==
         wirelessrecon::core::ScannerState::Completed) {
+
         if (!wifiCompletionMemoryReported) {
             Serial.println("[RADIO] Wi-Fi scan completed.");
 
@@ -474,25 +503,6 @@ void processRadios() {
     if (wifiState ==
         wirelessrecon::core::ScannerState::Failed) {
         Serial.println("[RADIO] Wi-Fi scan failed.");
-    }
-
-    // Report changes in the number of unique tracked devices.
-    // Existing-device updates do not necessarily increase these counts.
-    if (wifiCount != previousWifiCount ||
-        bleCount != previousBleCount ||
-        bluetoothClassicCount != previousBluetoothClassicCount) {
-
-        Serial.printf(
-            "[RADIO] Inventory update: "
-            "Wi-Fi=%u, BLE=%u, Bluetooth Classic=%u\n",
-            static_cast<unsigned>(wifiCount),
-            static_cast<unsigned>(bleCount),
-            static_cast<unsigned>(bluetoothClassicCount)
-        );
-
-        previousWifiCount = wifiCount;
-        previousBleCount = bleCount;
-        previousBluetoothClassicCount = bluetoothClassicCount;
     }
 }
 
