@@ -30,6 +30,8 @@
 
 #include "ui/lvgl/LVGLManager.h"
 
+#include "diagnostics/MemoryDiagnostics.h"
+
 #ifdef WR_ENABLE_HARDWARE_DIAGNOSTICS
 
 #include "diagnostics/BoardDiagnostics.h"
@@ -213,6 +215,10 @@ bool initializeCoreMemory() {
 
     Serial.println("[MEMORY] Core storage initialized.");
 
+    wirelessrecon::diagnostics::MemoryDiagnostics::printSnapshot(
+        "Core initialized"
+    );
+
     return true;
 }
 
@@ -244,6 +250,10 @@ bool initializeDisplay() {
         displayManager.display().height()
     );
 
+    wirelessrecon::diagnostics::MemoryDiagnostics::printSnapshot(
+        "Display initialized"
+    );
+
     return true;
 }
 
@@ -272,6 +282,10 @@ bool initializeTouch() {
     touchManager.setRotation(0);
 
     Serial.println("[TOUCH] Ready.");
+
+    wirelessrecon::diagnostics::MemoryDiagnostics::printSnapshot(
+        "Touch initialized"
+    );
 
     return true;
 }
@@ -304,6 +318,10 @@ bool initializeLVGL() {
     }
 
     Serial.println("[LVGL] Application ready.");
+
+    wirelessrecon::diagnostics::MemoryDiagnostics::printSnapshot(
+        "LVGL initialized"
+    );
 
     return true;
 }
@@ -364,6 +382,10 @@ bool initializeRadios() {
 
     Serial.println("[RADIO] Wi-Fi scan started.");
 
+    wirelessrecon::diagnostics::MemoryDiagnostics::printSnapshot(
+        "Radios initialized and Wi-Fi scan started"
+    );
+
     return true;
 }
 
@@ -376,6 +398,8 @@ void processRadios() {
         deviceInventory == nullptr) {
         return;
     }
+
+    static bool wifiCompletionMemoryReported = false;
 
     // Poll the Wi-Fi hardware adapter first so final observations are
     // submitted before the coordinator evaluates scanner completion.
@@ -402,6 +426,14 @@ void processRadios() {
     if (scannerState ==
         wirelessrecon::core::ScannerState::Completed) {
         Serial.println("[RADIO] Wi-Fi scan completed.");
+
+        if (!wifiCompletionMemoryReported) {
+            wirelessrecon::diagnostics::MemoryDiagnostics::printSnapshot(
+                "First Wi-Fi scan completed"
+            );
+
+            wifiCompletionMemoryReported = true;
+        }
     }
 
     if (scannerState ==
@@ -503,6 +535,10 @@ void setup() {
     Serial.println("================================");
     Serial.println(" WirelessRecon Modular Firmware");
     Serial.println("================================");
+
+    wirelessrecon::diagnostics::MemoryDiagnostics::printSnapshot(
+        "Startup baseline"
+    );
 
 #ifdef WR_ENABLE_HARDWARE_DIAGNOSTICS
 
