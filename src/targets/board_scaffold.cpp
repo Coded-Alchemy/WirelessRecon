@@ -312,6 +312,18 @@ bool initializeLVGL() {
 
     Serial.println("[LVGL] Starting application...");
 
+    // Bind the services created by initializeCoreMemory() before the
+    // dashboard is created. LVGLManager keeps non-owning references only.
+    if (wirelessCoordinator == nullptr || deviceInventory == nullptr) {
+        Serial.println("[LVGL] Core application services are unavailable.");
+        return false;
+    }
+
+    lvglManager.setApplicationContext(
+        *wirelessCoordinator,
+        *deviceInventory
+    );
+
     if (!lvglManager.begin()) {
         Serial.println("[LVGL] Initialization failed.");
         return false;
