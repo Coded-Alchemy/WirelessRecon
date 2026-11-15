@@ -1,6 +1,8 @@
+
 #include <Arduino.h>
 #include <esp32-hal-psram.h>
 
+#include <cstddef>
 #include <new>
 
 #include "hardware/BoardProfile.h"
@@ -413,33 +415,54 @@ void processRadios() {
 
     static bool wifiCompletionMemoryReported = false;
 
+    static std::size_t previousWifiCount = 0;
+    static std::size_t previousBleCount = 0;
+    static std::size_t previousBluetoothClassicCount = 0;
+
     // Poll the Wi-Fi hardware adapter first so final observations are
     // submitted before the coordinator evaluates scanner completion.
     wifiScanner.poll();
 
-    // BLE completion is delivered asynchronously by the Bluedroid GAP
-    // callback. Its state is read by the coordinator during process().
-    const auto scannerState = wifiScanner.state();
-
+    // Process all queued radio observations.
+    // The returned count is aggregate across registered scanners.
     const std::size_t accepted = wirelessCoordinator->process();
 
+    // Retrieve inventory counts independently for each radio type.
+    const std::size_t wifiCount =
+        deviceInventory->count(
+            wirelessrecon::core::RadioType::Wifi
+        );
+
+    const std::size_t bleCount =
+        deviceInventory->count(
+            wirelessrecon::core::RadioType::Ble
+        );
+
+    const std::size_t bluetoothClassicCount =
+        deviceInventory->count(
+            wirelessrecon::core::RadioType::BluetoothClassic
+        );
+
+    // Do not attribute the aggregate accepted count to a specific radio.
     if (accepted > 0) {
         Serial.printf(
-            "[RADIO] Accepted %u Wi-Fi observations. Inventory: %u\n",
+            "[RADIO] Accepted %u observations. "
+            "Inventory: Wi-Fi=%u, BLE=%u, Bluetooth Classic=%u\n",
             static_cast<unsigned>(accepted),
-            static_cast<unsigned>(
-                deviceInventory->count(
-                    wirelessrecon::core::RadioType::Wifi
-                )
-            )
+            static_cast<unsigned>(wifiCount),
+            static_cast<unsigned>(bleCount),
+            static_cast<unsigned>(bluetoothClassicCount)
         );
     }
 
-    if (scannerState ==
-        wirelessrecon::core::ScannerState::Completed) {
-        Serial.println("[RADIO] Wi-Fi scan completed.");
+    // Report Wi-Fi scanner completion and failure independently.
+    const auto wifiState = wifiScanner.state();
 
+    if (wifiState ==
+        wirelessrecon::core::ScannerState::Completed) {
         if (!wifiCompletionMemoryReported) {
+            Serial.println("[RADIO] Wi-Fi scan completed.");
+
             wirelessrecon::diagnostics::MemoryDiagnostics::printSnapshot(
                 "First Wi-Fi scan completed"
             );
@@ -448,9 +471,28 @@ void processRadios() {
         }
     }
 
-    if (scannerState ==
+    if (wifiState ==
         wirelessrecon::core::ScannerState::Failed) {
         Serial.println("[RADIO] Wi-Fi scan failed.");
+    }
+
+    // Report changes in the number of unique tracked devices.
+    // Existing-device updates do not necessarily increase these counts.
+    if (wifiCount != previousWifiCount ||
+        bleCount != previousBleCount ||
+        bluetoothClassicCount != previousBluetoothClassicCount) {
+
+        Serial.printf(
+            "[RADIO] Inventory update: "
+            "Wi-Fi=%u, BLE=%u, Bluetooth Classic=%u\n",
+            static_cast<unsigned>(wifiCount),
+            static_cast<unsigned>(bleCount),
+            static_cast<unsigned>(bluetoothClassicCount)
+        );
+
+        previousWifiCount = wifiCount;
+        previousBleCount = bleCount;
+        previousBluetoothClassicCount = bluetoothClassicCount;
     }
 }
 
