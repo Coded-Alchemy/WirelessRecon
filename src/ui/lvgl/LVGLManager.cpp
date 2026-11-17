@@ -1,27 +1,7 @@
+
 /**
  * @file LVGLManager.cpp
  * @brief LVGL 9 display/input adapter and application UI lifecycle.
- *
- * Rendering path:
- *
- *   LVGL widget tree
- *       -> LVGL partial renderer
- *       -> flushCallback()
- *       -> LVGLManager::flush()
- *       -> DisplayManager
- *       -> board-specific IDisplay implementation
- *
- * Input path:
- *
- *   TouchManager
- *       -> board-specific ITouch implementation
- *       -> LVGLManager::readTouch()
- *       -> touchReadCallback()
- *       -> LVGL pointer input processing
- *
- * The manager deliberately knows about DisplayManager and TouchManager,
- * rather than a particular panel or touch-controller driver. Board-specific
- * pin assignments and bus configuration remain below those abstractions.
  */
 
 #include "ui/lvgl/LVGLManager.h"
@@ -31,7 +11,6 @@
 
 #include "hardware/display/IDisplay.h"
 #include "hardware/touch/ITouch.h"
-
 #include "ui/display/DisplayCapabilities.h"
 #include "ui/layout/ResponsiveLayout.h"
 #include "ui/theme/UITheme.h"
@@ -52,23 +31,33 @@ void LVGLManager::setApplicationContext(
     core::WirelessCoordinator& coordinator,
     core::DeviceInventory& inventory
 ) {
-    // These pointers are non-owning. The board composition root must keep
-    // both services alive until after LVGLManager stops using the dashboard.
     coordinator_ = &coordinator;
     inventory_ = &inventory;
 
     dashboardScreen_.bind(coordinator, inventory);
+    wifiScreen_.bind(coordinator, inventory);
+
+    dashboardScreen_.setNavigationCallback(
+        &LVGLManager::navigationCallback,
+        this
+    );
+
+    wifiScreen_.setNavigationCallback(
+        &LVGLManager::navigationCallback,
+        this
+    );
+
+    wifiScreen_.setBackCallback(
+        &LVGLManager::wifiBackCallback,
+        this
+    );
 }
 
 bool LVGLManager::begin() {
-    if (initialized_) {
-        return true;
-    }
+    if (initialized_) return true;
 
     if (coordinator_ == nullptr || inventory_ == nullptr) {
-        Serial.println(
-            "[LVGL] Application context has not been configured."
-        );
+        Serial.println("[LVGL] Application context has not been configured.");
         return false;
     }
 
@@ -83,7 +72,6 @@ bool LVGLManager::begin() {
     }
 
     auto& screen = displayManager_.display();
-
     const uint16_t width = screen.width();
     const uint16_t height = screen.height();
 
@@ -98,9 +86,6 @@ bool LVGLManager::begin() {
     lv_init();
     lv_tick_set_cb(&LVGLManager::tickCallback);
 
-    // A partial buffer limits the static rendering footprint. It is large
-    // enough to batch multiple display rows while remaining much smaller
-    // than a full 240x320 or 320x480 RGB565 framebuffer.
     const uint16_t bufferLines =
         height < kDrawBufferLines ? height : kDrawBufferLines;
 
@@ -110,14 +95,12 @@ bool LVGLManager::begin() {
     const size_t requestedBytes =
         pixelCount * sizeof(uint16_t);
 
-    if (requestedBytes == 0 ||
-        requestedBytes > UINT32_MAX) {
+    if (requestedBytes == 0 || requestedBytes > UINT32_MAX) {
         Serial.println("[LVGL] Draw-buffer size is invalid.");
         return false;
     }
 
     drawBufferBytes_ = static_cast<uint32_t>(requestedBytes);
-
     drawBuffer_ = static_cast<uint16_t*>(
         std::malloc(drawBufferBytes_)
     );
@@ -127,7 +110,6 @@ bool LVGLManager::begin() {
             "[LVGL] Unable to allocate %lu-byte draw buffer.\n",
             static_cast<unsigned long>(drawBufferBytes_)
         );
-
         drawBufferBytes_ = 0;
         return false;
     }
@@ -136,23 +118,16 @@ bool LVGLManager::begin() {
 
     if (display_ == nullptr) {
         Serial.println("[LVGL] Display creation failed.");
-
         std::free(drawBuffer_);
         drawBuffer_ = nullptr;
         drawBufferBytes_ = 0;
-
         return false;
     }
 
     lv_display_set_user_data(display_, this);
-    lv_display_set_color_format(
-        display_,
-        LV_COLOR_FORMAT_RGB565
-    );
-    lv_display_set_flush_cb(
-        display_,
-        &LVGLManager::flushCallback
-    );
+    lv_display_set_color_format(display_, LV_COLOR_FORMAT_RGB565);
+    lv_display_set_flush_cb(display_, &LVGLManager::flushCallback);
+
     lv_display_set_buffers(
         display_,
         drawBuffer_,
@@ -165,28 +140,12 @@ bool LVGLManager::begin() {
 
     if (inputDevice_ == nullptr) {
         Serial.println("[LVGL] Input device creation failed.");
-
-        /*
-         * LVGL has already accepted the display and draw buffer. We avoid
-         * freeing the draw buffer here because the display may still refer
-         * to it. The failure is terminal for this boot; the caller should
-         * leave LVGL inactive rather than attempt a second initialization.
-         */
         return false;
     }
 
-    lv_indev_set_type(
-        inputDevice_,
-        LV_INDEV_TYPE_POINTER
-    );
-    lv_indev_set_display(
-        inputDevice_,
-        display_
-    );
-    lv_indev_set_user_data(
-        inputDevice_,
-        this
-    );
+    lv_indev_set_type(inputDevice_, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(inputDevice_, display_);
+    lv_indev_set_user_data(inputDevice_, this);
     lv_indev_set_read_cb(
         inputDevice_,
         &LVGLManager::touchReadCallback
@@ -198,7 +157,7 @@ bool LVGLManager::begin() {
     }
 
     initialized_ = true;
-    lastDashboardRefreshMs_ = millis();
+    lastScreenRefreshMs_ = millis();
 
     Serial.printf(
         "[LVGL] Initialized: %u x %u, RGB565, partial buffer (%u lines).\n",
@@ -211,25 +170,17 @@ bool LVGLManager::begin() {
 }
 
 void LVGLManager::handle() {
-    if (!initialized_) {
-        return;
-    }
+    if (!initialized_) return;
 
-    /*
-     * LVGL input, event callbacks, timers, layout, and drawing are all
-     * serviced from this task. Keep this as the sole regular LVGL service
-     * point in the application loop.
-     */
     lv_timer_handler();
 
     const uint32_t now = millis();
 
-    // Unsigned subtraction is safe across millis() rollover.
     if (static_cast<uint32_t>(
-            now - lastDashboardRefreshMs_
-        ) >= kDashboardRefreshIntervalMs) {
-        dashboardScreen_.refresh();
-        lastDashboardRefreshMs_ = now;
+            now - lastScreenRefreshMs_
+        ) >= kScreenRefreshIntervalMs) {
+        refreshActiveScreen();
+        lastScreenRefreshMs_ = now;
     }
 
     delay(kHandlerDelayMs);
@@ -256,10 +207,6 @@ void LVGLManager::flushCallback(
         manager->flush(area, pixelMap);
     }
 
-    /*
-     * LVGL must be notified even if the adapter rejects an invalid area.
-     * Otherwise the renderer can remain blocked waiting for this buffer.
-     */
     lv_display_flush_ready(display);
 }
 
@@ -285,15 +232,10 @@ void LVGLManager::flush(
     const ::lv_area_t* area,
     const uint8_t* pixelMap
 ) {
-    if (area == nullptr || pixelMap == nullptr) {
-        return;
-    }
+    if (area == nullptr || pixelMap == nullptr) return;
 
-    const int32_t width =
-        area->x2 - area->x1 + 1;
-
-    const int32_t height =
-        area->y2 - area->y1 + 1;
+    const int32_t width = area->x2 - area->x1 + 1;
+    const int32_t height = area->y2 - area->y1 + 1;
 
     if (width <= 0 || height <= 0 ||
         area->x1 < 0 || area->y1 < 0) {
@@ -307,11 +249,6 @@ void LVGLManager::flush(
         return;
     }
 
-    /*
-     * LVGL is configured for RGB565. The display abstraction accepts the
-     * same 16-bit pixel representation. No color conversion or temporary
-     * framebuffer is required here.
-     */
     screen.pushPixels(
         area->x1,
         area->y1,
@@ -322,9 +259,7 @@ void LVGLManager::flush(
 }
 
 void LVGLManager::readTouch(::lv_indev_data_t* data) {
-    if (data == nullptr) {
-        return;
-    }
+    if (data == nullptr) return;
 
     hardware::touch::TouchPoint point;
 
@@ -337,7 +272,7 @@ void LVGLManager::readTouch(::lv_indev_data_t* data) {
     }
 }
 
-bool LVGLManager::createDashboardScreen() {
+bool LVGLManager::prepareActiveScreen() {
     lv_obj_t* screen = lv_screen_active();
 
     if (screen == nullptr) {
@@ -345,17 +280,10 @@ bool LVGLManager::createDashboardScreen() {
         return false;
     }
 
-    // Remove any default or previous test-screen children.
     lv_obj_clean(screen);
+    theme::applyBackground(screen);
 
-    wirelessrecon::ui::theme::applyBackground(screen);
-
-    /*
-     * Build a portable description of the actual display. This keeps
-     * responsive selection independent from board-specific macros.
-     */
     wirelessrecon::ui::display::DisplayCapabilities capabilities;
-
     capabilities.width = displayManager_.display().width();
     capabilities.height = displayManager_.display().height();
     capabilities.hasTouch = touchManager_.isInitialized();
@@ -371,29 +299,100 @@ bool LVGLManager::createDashboardScreen() {
             capabilities
         );
 
-    /*
-     * The first dashboard is intentionally single-column. The selected
-     * profile still supplies the safe outer margin, and later dashboard
-     * components can consume the remaining profile properties.
-     */
     lv_obj_set_style_pad_all(
-        screen,
-        profile.outerMargin,
-        LV_PART_MAIN
+        screen, profile.outerMargin, LV_PART_MAIN
     );
 
-    if (!dashboardScreen_.create(screen)) {
+    return true;
+}
+
+bool LVGLManager::createDashboardScreen() {
+    if (!prepareActiveScreen()) return false;
+
+    if (!dashboardScreen_.create(lv_screen_active())) {
         Serial.println("[LVGL] Dashboard widget creation failed.");
         return false;
     }
 
-    Serial.printf(
-        "[LVGL] Dashboard created. Layout columns: %u, margin: %u.\n",
-        profile.columns,
-        profile.outerMargin
-    );
-
+    Serial.println("[LVGL] Dashboard created.");
     return true;
+}
+
+bool LVGLManager::createWifiScreen() {
+    if (!prepareActiveScreen()) return false;
+
+    if (!wifiScreen_.create(lv_screen_active())) {
+        Serial.println("[LVGL] Wi-Fi screen creation failed.");
+        return false;
+    }
+
+    Serial.println("[LVGL] Wi-Fi screen created.");
+    return true;
+}
+
+void LVGLManager::showDashboard() {
+    if (!initialized_) return;
+    if (!createDashboardScreen()) return;
+
+    activeScreen_ = ActiveScreen::Dashboard;
+    lastScreenRefreshMs_ = millis();
+}
+
+void LVGLManager::showWifi() {
+    if (!initialized_) return;
+    if (!createWifiScreen()) return;
+
+    activeScreen_ = ActiveScreen::Wifi;
+    lastScreenRefreshMs_ = millis();
+}
+
+void LVGLManager::navigateTo(
+    theme::NavigationDestination destination
+) {
+    if (!initialized_) return;
+
+    switch (destination) {
+        case theme::NavigationDestination::Dashboard:
+            showDashboard();
+            break;
+
+        case theme::NavigationDestination::Wifi:
+            showWifi();
+            break;
+
+        case theme::NavigationDestination::Bluetooth:
+        case theme::NavigationDestination::Settings:
+            // These destinations are deliberately disabled in the UI
+            // until their screens are implemented.
+            break;
+    }
+}
+
+void LVGLManager::refreshActiveScreen() {
+    if (activeScreen_ == ActiveScreen::Wifi) {
+        wifiScreen_.refresh();
+    } else {
+        dashboardScreen_.refresh();
+    }
+}
+
+void LVGLManager::navigationCallback(
+    void* context,
+    theme::NavigationDestination destination
+) {
+    auto* manager = static_cast<LVGLManager*>(context);
+
+    if (manager != nullptr) {
+        manager->navigateTo(destination);
+    }
+}
+
+void LVGLManager::wifiBackCallback(void* context) {
+    auto* manager = static_cast<LVGLManager*>(context);
+
+    if (manager != nullptr) {
+        manager->showDashboard();
+    }
 }
 
 } // namespace wirelessrecon::ui::lvgl

@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "Device.h"
@@ -10,108 +9,141 @@
 namespace wirelessrecon::core {
 
 /**
- * Maintains the historical inventory of discovered wireless devices.
+ * @class DeviceInventory
+ * @brief Owns the authoritative historical inventory of discovered devices.
  *
- * Ownership:
- * - This class owns device identity, observation counts, and visibility state.
- * - Radio adapters submit observations through upsert().
- * - The application/coordinator controls scan lifecycle.
- * - UI code reads inventory data.
+ * @details
+ * Radio adapters submit observations through upsert(). The application task
+ * serializes inventory access and controls scan lifecycle. UI components read
+ * records through the copy APIs and never own the authoritative inventory.
  *
  * Scan lifecycle:
  *   beginScan() -> upsert() zero or more times -> completeScan()
  *
- * If a scan fails or times out:
+ * Failed or interrupted scan:
  *   beginScan() -> upsert() zero or more times -> cancelScan()
  *
- * A cancelled scan never changes currentlyVisible or generation().
+ * A cancelled scan preserves the last successfully established visibility
+ * state and does not increment generation().
  *
- * sightings counts accepted observations. It does not count scan sessions:
- * for example, each accepted BLE advertisement increments the count.
+ * sightings counts accepted observations, not scan sessions.
  *
- * This class is not internally synchronized. Calls must be serialized by
- * the application task. Asynchronous radio callbacks must not call it
- * directly; observations should be transferred to the application task.
+ * Threading:
+ * This class is not internally synchronized. All calls must be serialized
+ * by the application task. Radio callbacks must transfer observations to
+ * that task rather than calling this class directly.
  */
 class DeviceInventory {
 public:
-    // Capacity is divided equally across Wi-Fi, BLE, and Bluetooth Classic.
-    static constexpr size_t kCapacity = 150;
-    static constexpr size_t kRadioCount = 3;
+    static constexpr std::size_t kCapacity = 150;
+    static constexpr std::size_t kRadioCount = 3;
 
     DeviceInventory() = default;
 
     /**
-     * Starts a scan for one radio.
-     *
-     * Returns false for an invalid radio or if that radio is already scanning.
-     * Existing visibility is preserved until a successful completeScan().
+     * @brief Starts a scan for one radio.
+     * @return false for an invalid radio or an already-active scan.
      */
     bool beginScan(RadioType radio);
 
     /**
-     * Adds or updates one observation.
+     * @brief Adds or updates one observation during an active scan.
      *
-     * The observation is accepted only while its radio has an active scan.
      * Identity is the combination of radio type and address.
      *
-     * Returns false for an invalid address, invalid radio, inactive scan,
-     * or when the fixed inventory capacity has been reached.
+     * @return false for an invalid observation, inactive scan, or full
+     * inventory.
      */
     bool upsert(const Device& observation);
 
     /**
-     * Completes a successfully finished scan.
+     * @brief Commits a successful scan and updates visibility.
      *
-     * Devices observed during this scan become visible. Previously visible
-     * devices not observed during this scan become not currently visible.
+     * Devices observed during the scan become visible. Previously visible
+     * devices not observed during the scan become not currently visible.
      * The inventory generation increments exactly once.
-     *
-     * Does nothing if no scan is active for the supplied radio.
      */
     void completeScan(RadioType radio);
 
     /**
-     * Aborts a failed, stopped, or timed-out scan.
+     * @brief Cancels a scan without changing established visibility.
      *
-     * Previously known visibility and generation are left unchanged.
-     * Partial observations remain in the historical inventory but are not
-     * considered proof that the scan completed successfully.
+     * Partial observations remain in historical storage, but are not treated
+     * as proof of a successful scan.
      */
     void cancelScan(RadioType radio);
 
-    size_t size() const { return count_; }
-    size_t count(RadioType radio) const;
+    /** @brief Returns the total number of records across all radios. */
+    std::size_t size() const { return count_; }
 
-    const Device* at(size_t index) const;
+    /** @brief Returns the number of records belonging to one radio. */
+    std::size_t count(RadioType radio) const;
 
+    /** @brief Returns a read-only pointer to a record by global index. */
+    const Device* at(std::size_t index) const;
+
+    /** @brief Finds a record by radio and stable address. */
     const Device* find(RadioType radio, const char* address) const;
 
     /**
-     * Copies matching devices into caller-owned storage.
+     * @brief Copies up to outputCapacity records belonging to one radio.
      *
-     * Returns the number copied. The result is limited by outputCapacity.
+     * Records are copied in their inventory order. This method is retained
+     * for callers that need a bounded prefix of a radio's inventory.
+     *
+     * @param radio Radio type to copy.
+     * @param output Caller-owned destination buffer.
+     * @param outputCapacity Number of Device objects available in output.
+     * @return Number of records copied.
      */
-    size_t copyRadio(
+    std::size_t copyRadio(
         RadioType radio,
         Device* output,
-        size_t outputCapacity) const;
+        std::size_t outputCapacity
+    ) const;
 
     /**
-     * Counts successful scan completions across all radios.
-     * This is not a per-device observation counter.
+     * @brief Copies a page of records belonging to one radio.
+     *
+     * @details
+     * The method skips the first offset matching records, then copies at most
+     * outputCapacity records into caller-owned storage. It does not allocate
+     * memory and does not create a second inventory snapshot.
+     *
+     * This is intended for UI views that display a small bounded page from a
+     * larger inventory.
+     *
+     * @param radio Radio type to copy.
+     * @param offset Number of matching records to skip.
+     * @param output Caller-owned destination buffer.
+     * @param outputCapacity Number of Device objects available in output.
+     * @return Number of records copied into output.
      */
-    uint32_t generation() const { return generation_; }
+    std::size_t copyRadioPage(
+        RadioType radio,
+        std::size_t offset,
+        Device* output,
+        std::size_t outputCapacity
+    ) const;
 
+    /**
+     * @brief Returns the inventory generation.
+     *
+     * The generation increments once for each successfully completed radio
+     * scan. Cancelled scans do not increment it.
+     */
+    std::uint32_t generation() const { return generation_; }
+
+    /** @brief Returns whether a scan is active for the supplied radio. */
     bool scanInProgress(RadioType radio) const;
 
 private:
     std::array<Device, kCapacity> devices_{};
-    size_t count_ = 0;
-    uint32_t generation_ = 0;
+    std::size_t count_ = 0;
+    std::uint32_t generation_ = 0;
     std::array<bool, kRadioCount> scanning_{};
 
-    static size_t radioIndex(RadioType radio);
+    static std::size_t radioIndex(RadioType radio);
     static bool validAddress(const char* address);
 };
 

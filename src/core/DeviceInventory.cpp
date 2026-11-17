@@ -1,20 +1,26 @@
-
 #include "core/DeviceInventory.h"
 
 #include <limits>
+#include <string>
 
 namespace wirelessrecon::core {
 
-size_t DeviceInventory::radioIndex(RadioType radio) {
-    return static_cast<size_t>(radio);
+/**
+ * @brief Converts a radio enum to its array index.
+ *
+ * The caller must validate the returned index against kRadioCount.
+ */
+std::size_t DeviceInventory::radioIndex(RadioType radio) {
+    return static_cast<std::size_t>(radio);
 }
 
+/** @brief Checks that an address pointer refers to a nonempty string. */
 bool DeviceInventory::validAddress(const char* address) {
     return address != nullptr && address[0] != '\0';
 }
 
 bool DeviceInventory::beginScan(RadioType radio) {
-    const size_t index = radioIndex(radio);
+    const std::size_t index = radioIndex(radio);
 
     if (index >= kRadioCount || scanning_[index]) {
         return false;
@@ -22,9 +28,9 @@ bool DeviceInventory::beginScan(RadioType radio) {
 
     scanning_[index] = true;
 
-    // Reset only this radio's scan markers. Do not mark devices missing yet:
-    // the scan has not completed and may still fail.
-    for (size_t i = 0; i < count_; ++i) {
+    // Reset only this radio's scan markers. Visibility is not changed until
+    // a successful completeScan().
+    for (std::size_t i = 0; i < count_; ++i) {
         if (devices_[i].radio == radio) {
             devices_[i].seenInCurrentScan = false;
         }
@@ -34,19 +40,18 @@ bool DeviceInventory::beginScan(RadioType radio) {
 }
 
 bool DeviceInventory::upsert(const Device& observation) {
-    const size_t radio = radioIndex(observation.radio);
+    const std::size_t radio = radioIndex(observation.radio);
 
-    // Reject malformed observations and callbacks arriving outside a scan.
     if (!validAddress(observation.address.c_str()) ||
         radio >= kRadioCount ||
         !scanning_[radio]) {
         return false;
     }
 
-    size_t index = count_;
+    std::size_t index = count_;
 
-    // Radio + address form the stable device identity.
-    for (size_t i = 0; i < count_; ++i) {
+    // A radio address is the stable identity. SSID is not unique.
+    for (std::size_t i = 0; i < count_; ++i) {
         if (sameIdentity(devices_[i], observation)) {
             index = i;
             break;
@@ -61,7 +66,7 @@ bool DeviceInventory::upsert(const Device& observation) {
         Device& added = devices_[count_];
         added = observation;
 
-        // Lifecycle counters are owned by the inventory, not the adapter.
+        // Lifecycle fields are maintained by the inventory.
         added.firstSeenMs = observation.firstSeenMs != 0
                                 ? observation.firstSeenMs
                                 : observation.lastSeenMs;
@@ -74,11 +79,10 @@ bool DeviceInventory::upsert(const Device& observation) {
 
     Device& current = devices_[index];
 
-    const uint32_t firstSeen = current.firstSeenMs;
-    const uint32_t previousSightings = current.sightings;
+    const std::uint32_t firstSeen = current.firstSeenMs;
+    const std::uint32_t previousSightings = current.sightings;
 
-    // Keep the last useful Bluetooth name if a later advertisement omits it.
-    // Wi-Fi SSID is stored separately in WifiMetadata and is always replaced.
+    // Preserve a useful Bluetooth name when a later advertisement omits it.
     const bool preserveName =
         observation.name.empty() && !current.name.empty();
 
@@ -87,7 +91,7 @@ bool DeviceInventory::upsert(const Device& observation) {
     current = observation;
     current.firstSeenMs = firstSeen;
     current.sightings =
-        previousSightings < std::numeric_limits<uint32_t>::max()
+        previousSightings < std::numeric_limits<std::uint32_t>::max()
             ? previousSightings + 1
             : previousSightings;
 
@@ -96,19 +100,17 @@ bool DeviceInventory::upsert(const Device& observation) {
     }
 
     current.seenInCurrentScan = true;
-
     return true;
 }
 
 void DeviceInventory::completeScan(RadioType radio) {
-    const size_t index = radioIndex(radio);
+    const std::size_t index = radioIndex(radio);
 
-    // Ignore unmatched completion callbacks. They must not change generation.
     if (index >= kRadioCount || !scanning_[index]) {
         return;
     }
 
-    for (size_t i = 0; i < count_; ++i) {
+    for (std::size_t i = 0; i < count_; ++i) {
         if (devices_[i].radio == radio) {
             devices_[i].currentlyVisible =
                 devices_[i].seenInCurrentScan;
@@ -120,15 +122,14 @@ void DeviceInventory::completeScan(RadioType radio) {
 }
 
 void DeviceInventory::cancelScan(RadioType radio) {
-    const size_t index = radioIndex(radio);
+    const std::size_t index = radioIndex(radio);
 
     if (index >= kRadioCount || !scanning_[index]) {
         return;
     }
 
-    // Discard this scan's temporary markers. Keep historical records and
-    // their last successfully established visibility state unchanged.
-    for (size_t i = 0; i < count_; ++i) {
+    // Clear temporary markers while preserving historical visibility.
+    for (std::size_t i = 0; i < count_; ++i) {
         if (devices_[i].radio == radio) {
             devices_[i].seenInCurrentScan = false;
         }
@@ -137,16 +138,16 @@ void DeviceInventory::cancelScan(RadioType radio) {
     scanning_[index] = false;
 }
 
-size_t DeviceInventory::count(RadioType radio) const {
-    const size_t index = radioIndex(radio);
+std::size_t DeviceInventory::count(RadioType radio) const {
+    const std::size_t index = radioIndex(radio);
 
     if (index >= kRadioCount) {
         return 0;
     }
 
-    size_t result = 0;
+    std::size_t result = 0;
 
-    for (size_t i = 0; i < count_; ++i) {
+    for (std::size_t i = 0; i < count_; ++i) {
         if (devices_[i].radio == radio) {
             ++result;
         }
@@ -155,21 +156,21 @@ size_t DeviceInventory::count(RadioType radio) const {
     return result;
 }
 
-const Device* DeviceInventory::at(size_t index) const {
+const Device* DeviceInventory::at(std::size_t index) const {
     return index < count_ ? &devices_[index] : nullptr;
 }
 
 const Device* DeviceInventory::find(
     RadioType radio,
-    const char* address) const {
-
-    const size_t index = radioIndex(radio);
+    const char* address
+) const {
+    const std::size_t index = radioIndex(radio);
 
     if (index >= kRadioCount || !validAddress(address)) {
         return nullptr;
     }
 
-    for (size_t i = 0; i < count_; ++i) {
+    for (std::size_t i = 0; i < count_; ++i) {
         const Device& device = devices_[i];
 
         if (device.radio == radio && device.address == address) {
@@ -180,30 +181,52 @@ const Device* DeviceInventory::find(
     return nullptr;
 }
 
-size_t DeviceInventory::copyRadio(
+std::size_t DeviceInventory::copyRadio(
     RadioType radio,
     Device* output,
-    size_t outputCapacity) const {
+    std::size_t outputCapacity
+) const {
+    return copyRadioPage(radio, 0, output, outputCapacity);
+}
 
-    const size_t index = radioIndex(radio);
+std::size_t DeviceInventory::copyRadioPage(
+    RadioType radio,
+    std::size_t offset,
+    Device* output,
+    std::size_t outputCapacity
+) const {
+    const std::size_t index = radioIndex(radio);
 
-    if (index >= kRadioCount || output == nullptr || outputCapacity == 0) {
+    if (index >= kRadioCount ||
+        output == nullptr ||
+        outputCapacity == 0) {
         return 0;
     }
 
-    size_t copied = 0;
+    std::size_t matchingRecordsSkipped = 0;
+    std::size_t copied = 0;
 
-    for (size_t i = 0; i < count_ && copied < outputCapacity; ++i) {
-        if (devices_[i].radio == radio) {
-            output[copied++] = devices_[i];
+    for (std::size_t i = 0;
+         i < count_ && copied < outputCapacity;
+         ++i) {
+
+        if (devices_[i].radio != radio) {
+            continue;
         }
+
+        if (matchingRecordsSkipped < offset) {
+            ++matchingRecordsSkipped;
+            continue;
+        }
+
+        output[copied++] = devices_[i];
     }
 
     return copied;
 }
 
 bool DeviceInventory::scanInProgress(RadioType radio) const {
-    const size_t index = radioIndex(radio);
+    const std::size_t index = radioIndex(radio);
 
     return index < kRadioCount && scanning_[index];
 }
